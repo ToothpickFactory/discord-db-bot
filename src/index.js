@@ -1,83 +1,50 @@
 const Discord   = require("discord.js");
 const config    = require("../config/config.json");
-const jsonfile  = require('jsonfile');
-const simpleId  = require('node-sid');
-const _         = require('lodash');
+const methods   = require("./methods");
+const helpers   = require("./helpers");
+const dbsync    = require("./util/dbsync");
 
-let DBPath = '../config/db.json';
-let db = jsonfile.readFileSync(DBPath);
-var mybot = new Discord.Client();
-
-
-mybot.on("message", function(msg) {
-
-  if(msg.content.substring(0,3) === 'db.' && msg.author.id !== '211139208994095106'){
-    try{
-      let res = processCommand(msg.content);
-      res = JSON.stringify( res, null, '\t' );
-      mybot.reply(msg, res);
-    } catch(e){
-      mybot.reply(msg, e);
-    }
-  }
-
-});
-
+let db    = dbsync.load();
+let mybot = new Discord.Client();
 mybot.loginWithToken(config.token);
 
+mybot.on("message", function(msg) {
+  if(msg.author.id === config.botId) return;
 
-function processCommand(cmdString){
+  try{
+    let res = '';
+
+    if(msg.content.substring(0,3) === 'db.'){
+      res = processCommand(db, msg.content);
+    }else if(msg.content.substring(0,3) === 'db '){
+      res = processAlias(db, msg.content);
+    }
+
+    res = JSON.stringify( res, null, '\t' );
+    mybot.reply(msg, res);
+  }catch(e){
+    mybot.reply(msg, e);
+  }
+});
+
+
+function processAlias(db, cmdString){
+  let args  = cmdString.split(' ');
+  let cmd   = helpers.alias(db, args[1]);
+  if(!cmd) return `No alias for "${args[1]}"`;
+  return processCommand(db, cmd);
+}
+
+
+function processCommand(db, cmdString){
   if(cmdString[cmdString.length - 1] !== ')') cmdString += '.find()';
-  let nodes         = cmdString.split('.');
+  let nodes         = cmdString.match(/(?:[^\."]+|"[^"]*")+/g);
   let rawMethod     = nodes.pop();
   let method        = rawMethod.substr(0, rawMethod.indexOf('('));
   let rawArgs       = rawMethod.match(/\(([^)]+)\)/);
-  let args          = rawArgs ? rawArgs[1] : null;
+  let args          = rawArgs ? rawArgs[1].split(",").map(JSON.parse) : null;
   let paths         = nodes;
   paths.shift();
 
-  return methods[method](paths, args);
-}
-
-let create = (paths, nodeName) => {
-  nodeName      = JSON.parse(nodeName);
-  db[nodeName]  = {};
-  jsonfile.writeFile(DBPath, db);
-  return `Collection ${nodeName} created!`;
-}
-
-let insert = (paths, args) => {
-  let obj   = JSON.parse(args);
-  obj._id   = simpleId().create();
-  db[paths][obj._id] = obj;
-  jsonfile.writeFile(DBPath, db);
-  return db[paths][obj._id];
-}
-
-let find = (paths, options) => {
-  let node = paths.length > 1 ? db[paths[0]][paths[1]] : db[paths[0]];
-  return node;
-}
-
-let remove = (paths, options) => {
-  if( !paths[1] ) return 'Can not use "Remove" on a collection';
-  delete db[paths[0]][paths[1]];
-  jsonfile.writeFile(DBPath, db);
-  return `Removed ${paths[1]} From ${paths[0]}`;
-}
-
-let update = (paths, args) => {
-  let obj       = JSON.parse(args);
-  let mergedObj = Object.assign(db[paths[0]][paths[1]], obj);
-  db[paths[0]][paths[1]] = mergedObj;
-  jsonfile.writeFile(DBPath, db);
-  return db[paths[0]][paths[1]];
-}
-
-const methods = {
-  create,
-  insert,
-  find,
-  remove,
-  update
+  return methods[method](db, paths, args);
 }
